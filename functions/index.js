@@ -4,9 +4,10 @@ const admin = require("firebase-admin");
 const express = require("express");
 const cors = require("cors");
 
-const serviceAccount = require("./serviceAccountKey.json");
+// const serviceAccount = require("./serviceAccountKey.json");
 
-admin.initializeApp({credential: admin.credential.cert(serviceAccount)});
+// admin.initializeApp({credential: admin.credential.cert(serviceAccount)});
+admin.initializeApp();
 
 const app = express();
 app.use(cors({origin: true}));
@@ -16,11 +17,14 @@ const db = admin.firestore();
 const validateRole = (requiredRole) => {
   return async (req, res, next) => {
     // 1. Reutilizamos la lógica del token (puedes separarla si prefieres)
-    if (!req.headers.authorization || !req.headers.authorization.startsWith('Bearer ')) {
-      return res.status(403).send('No autorizado: Falta el Token');
+    if (
+      !req.headers.authorization ||
+      !req.headers.authorization.startsWith("Bearer ")
+    ) {
+      return res.status(403).send("No autorizado: Falta el Token");
     }
 
-    const idToken = req.headers.authorization.split('Bearer ')[1];
+    const idToken = req.headers.authorization.split("Bearer ")[1];
 
     try {
       // 2. Verificar el token
@@ -31,28 +35,31 @@ const validateRole = (requiredRole) => {
       const userDoc = await db.collection("users").doc(uid).get();
 
       if (!userDoc.exists) {
-        return res.status(404).send('Usuario no encontrado en la base de datos');
+        return res.status(404).send(
+            "Usuario no encontrado en la base de datos",
+        );
       }
 
       const userData = userDoc.data();
-      req.user = { uid, ...userData }; // Guardamos nombre y rol en el request
+      req.user = {uid, ...userData}; // Guardamos nombre y rol en el request
 
       // 4. Lógica de permisos
-      // Si el usuario es 'admin', pasa siempre. 
+      // Si el usuario es 'admin', pasa siempre.
       // Si es 'viewer', solo pasa si el servicio requiere 'viewer'.
-      if (userData.role === 'admin') {
-        return next();
-      } 
-      
-      if (userData.role === 'viewer' && requiredRole === 'viewer') {
+      if (userData.role === "admin") {
         return next();
       }
 
-      return res.status(403).send('Permisos insuficientes: Se requiere rol ' + requiredRole);
+      if (userData.role === "viewer" && requiredRole === "viewer") {
+        return next();
+      }
 
+      return res.status(403).send(
+          "Permisos insuficientes: Se requiere rol " + requiredRole,
+      );
     } catch (error) {
-      console.error('Error de autenticación/roles:', error);
-      return res.status(403).send('Error de validación');
+      console.error("Error de autenticación/roles:", error);
+      return res.status(403).send("Error de validación");
     }
   };
 };
@@ -63,7 +70,7 @@ app.get("/hello", (req, res) => {
       .send("Hello World from Express and Firebase Functions!");
 });
 
-app.get("/topics", validateRole('viewer'), async (req, res) => {
+app.get("/topics", validateRole("viewer"), async (req, res) => {
   (async () => {
     try {
       const topics = [];
@@ -83,7 +90,58 @@ app.get("/topics", validateRole('viewer'), async (req, res) => {
   })();
 });
 
-app.post("/subtopics", validateRole('viewer'), async (req, res) => {
+
+app.post("/topics-subtopics", validateRole("admin"), async (req, res) => {
+  (async () => {
+    try {
+      const {topicId, isSubtopic, subtopicId, data} = req.body;
+
+      if (isSubtopic === true) {
+        if (!topicId || !isSubtopic) {
+          return res.status(400).json(
+              {
+                success: false,
+                error: "Datos incompletos",
+              },
+          );
+        }
+
+
+        const collectionRef = db.collection(
+            `topics/${topicId}/subtopics`,
+        );
+
+        if (subtopicId) {
+          await collectionRef
+              .doc(subtopicId)
+              .set(data, {merge: true});
+        } else {
+          await collectionRef.add(data);
+        }
+
+        return res.status(200).json({success: true});
+      } else {
+        const collectionRef = db.collection(
+            `topics`,
+        );
+
+        if (topicId) {
+          await collectionRef
+              .doc(topicId)
+              .set(data, {merge: true});
+        } else {
+          await collectionRef.add(data);
+        }
+
+        return res.status(200).json({success: true});
+      }
+    } catch (error) {
+      return res.status(500).send(error);
+    }
+  })();
+});
+
+app.post("/subtopics", validateRole("viewer"), async (req, res) => {
   (async () => {
     try {
       const topics = [];
@@ -103,7 +161,7 @@ app.post("/subtopics", validateRole('viewer'), async (req, res) => {
   })();
 });
 
-app.post("/update-detail", validateRole('admin'), async (req, res) => {
+app.post("/update-detail", validateRole("admin"), async (req, res) => {
   (async () => {
     try {
       const {topicId, subtopicId, blocks} = req.body;
@@ -138,16 +196,26 @@ app.post("/update-detail", validateRole('admin'), async (req, res) => {
   })();
 });
 
-app.post("/subtopic-detail", validateRole('viewer'), async (req, res) => {
+app.post("/subtopic-detail", validateRole("viewer"), async (req, res) => {
   (async () => {
     try {
+      const {topicId, subtopicId, isAdmin} = req.body;
+
+      if (isAdmin === true && req.user.role !== "admin") {
+        return res.status(403).json({
+          error: `Acceso denegado: 
+          Intentaste acceder como administrador 
+          sin tener el rol necesario.`,
+        });
+      }
+
       const topics = [];
       const query = db
           .collection(
               `topics/${
-                req.body.topicId
+                topicId
               }/subtopics/${
-                req.body.subtopicId
+                subtopicId
               }/blocks`,
           )
           .orderBy("order", "asc");
@@ -166,7 +234,7 @@ app.post("/subtopic-detail", validateRole('viewer'), async (req, res) => {
   })();
 });
 
-app.post("/delete-block-detail", validateRole('admin'), async (req, res) => {
+app.post("/delete-block-detail", validateRole("admin"), async (req, res) => {
   (async () => {
     try {
       const collectionRef = db
