@@ -70,6 +70,31 @@ app.get("/hello", (req, res) => {
       .send("Hello World from Express and Firebase Functions!");
 });
 
+app.post("/user", validateRole("viewer"), async (req, res) => {
+  try {
+    const {isAdmin} = req.body;
+
+    if (isAdmin === true && req.user.role !== "admin") {
+      return res.status(403).json({
+        error: `Acceso denegado: 
+          Intentaste acceder como administrador 
+          sin tener el rol necesario.`,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: req.user,
+    });
+  } catch (error) {
+    console.error("Error obteniendo usuario:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Error obteniendo usuario",
+    });
+  }
+});
+
 app.get("/topics", validateRole("viewer"), async (req, res) => {
   (async () => {
     try {
